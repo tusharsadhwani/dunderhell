@@ -1,7 +1,7 @@
 import ast
 import math
 from textwrap import dedent
-from typing import Any, Sequence, Type
+from typing import Sequence, Type
 
 
 def dunderify(tree: ast.AST) -> None:
