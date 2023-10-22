@@ -1,9 +1,10 @@
 import ast
 import math
 from textwrap import dedent
+from typing import Any, Sequence, Type
 
 
-def dunderify(tree: ast.AST) -> ast.AST:
+def dunderify(tree: ast.AST) -> None:
     """Turn Python code into dunders."""
     visitors = [
         StringVisitor(),
@@ -15,7 +16,6 @@ def dunderify(tree: ast.AST) -> ast.AST:
         visitor.visit(tree)
 
     ast.fix_missing_locations(tree)
-    return tree
 
 
 class StringVisitor(ast.NodeTransformer):
@@ -77,12 +77,7 @@ class StringVisitor(ast.NodeTransformer):
 
         # Otherwise we need to create a BinOp tree
         chr_nodes = [self.create_chr(character) for character in string]
-
-        binop_tree = chr_nodes[0]
-        for node in chr_nodes[1:]:
-            binop_tree = ast.BinOp(binop_tree, ast.Add(), node)
-
-        return binop_tree
+        return make_binop(ast.Add(), chr_nodes)
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
         super().generic_visit(node)
@@ -111,12 +106,63 @@ class NumberVisitor(ast.NodeTransformer):
         )
     """
 
-    # TODO
+    # __name__.__len__() == 8
+    eight = ast.Call(
+        func=ast.Attribute(ast.Name(id="__name__"), attr="__len__"),
+        args=[],
+        keywords=[],
+    )
+    # eight // eight == 1
+    one = ast.BinOp(eight, ast.FloorDiv(), eight)
+    # eight - eight == 0
+    zero = ast.BinOp(eight, ast.Sub(), eight)
+
+    @classmethod
+    def build_number_under_8(cls, number: int) -> ast.expr:
+        if number == 0:
+            return cls.zero
+
+        return make_binop(ast.Add(), [cls.one] * number)
+
+    @classmethod
+    def build_number(cls, number: int) -> ast.expr:
+        if number < 8:
+            return cls.build_number_under_8(number)
+
+        number_parts: list[ast.expr] = []
+        remainder = number
+        while remainder >= 8:
+            log_8 = int(math.log(remainder, 8))
+            # Create a power of 8 by doing 8*8*8*..., `log_8` times
+            eight_tree = make_binop(ast.Mult(), [cls.eight] * log_8)
+            number_parts.append(eight_tree)
+            # we just created this power of 8, subtract to get remainder
+            remainder -= 8**log_8
+
+        # now remainder is under 8.
+        if remainder > 0:
+            number_parts.append(cls.build_number_under_8(remainder))
+
+        # Now we need to add all the parts together
+        return make_binop(ast.Add(), number_parts)
+
+    def visit_Constant(self, node: ast.Constant) -> ast.expr:
+        super().generic_visit(node)
+
+        if not isinstance(node.value, int):
+            return node
+
+        number = node.value
+        return self.build_number(number)
 
 
 class OpVisitor(ast.NodeTransformer):
     """
-    Converts operators into dunders.
+    Converts unary, binary and comparison operators into dunders.
+    AST node mapping created from `stdlib/_ast.pyi` in typeshed.
+
+    `is` and `is not` are not supported, those are in `IsVisitor`.
+    Boolean operators are also not supported, those are in `BoolVisitor`.
 
     Input:
         foo = 5
@@ -127,36 +173,106 @@ class OpVisitor(ast.NodeTransformer):
         print((3).__neg__().__add__(foo.__mul__(9)))
     """
 
-    # TODO
+    bin_op_map: dict[Type[ast.operator], str] = {
+        ast.Add: "__add__",
+        ast.BitAnd: "__and__",
+        ast.BitOr: "__or__",
+        ast.BitXor: "__xor__",
+        ast.Div: "__div__",
+        ast.FloorDiv: "__floordiv__",
+        ast.LShift: "__lshift__",
+        ast.Mod: "__mod__",
+        ast.Mult: "__mul__",
+        ast.MatMult: "__matmul__",
+        ast.Pow: "__pow__",
+        ast.RShift: "__rshift__",
+        ast.Sub: "__sub__",
+    }
+
+    unary_op_map: dict[Type[ast.unaryop], str] = {
+        ast.Invert: "__invert__",
+        ast.Not: "__bool__",
+        ast.UAdd: "__pos__",
+        ast.USub: "__neg__",
+    }
+
+    # TODO: `is` and `is not` have to be special cased turning `x is y` into
+    # `id(x) == id(y)`, and put in a visitor that runs before `OpVisitor`.
+    cmp_op_map: dict[Type[ast.cmpop], str] = {
+        ast.Eq: "__eq__",
+        ast.Gt: "__gt__",
+        ast.GtE: "__ge__",
+        ast.In: "__contains__",
+        ast.Lt: "__lt__",
+        ast.LtE: "__le__",
+        ast.NotEq: "__ne__",
+        ast.NotIn: "__contains__",  # is special cased in the visitor
+    }
+
+    @staticmethod
+    def call_method(node: ast.expr, method: str, args: Sequence[ast.expr]) -> ast.Call:
+        """
+        Wraps given expression in a method call.
+        eg. if `method` is '__add__', returns `<node>.__add__(*args)`.
+
+        One edge case: returns BoolOp nodes if comparisons have multiple operators.
+        eg. `x < y < z` returns `x.__lt__(y) and y.__lt__(z)`.
+        """
+        return ast.Call(
+            func=ast.Attribute(node, attr=method),
+            args=args,
+            keywords=[],
+        )
+
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> ast.expr:
+        super().generic_visit(node)
+
+        dunder_name = self.unary_op_map[type(node.op)]
+        return self.call_method(node.operand, dunder_name, args=[])
+
+    def visit_BinOp(self, node: ast.BinOp) -> ast.expr:
+        super().generic_visit(node)
+
+        dunder_name = self.bin_op_map[type(node.op)]
+        return self.call_method(node.left, dunder_name, args=[node.right])
+
+    def visit_Compare(self, node: ast.Compare) -> ast.expr:
+        super().generic_visit(node)
+
+        if any(type(op) in (ast.Is, ast.IsNot) for op in node.ops):
+            # These can't be turned into a dunder directly.
+            # If you're using `IsVisitor` before `OpVisitor`, this should never be hit.
+            return node
+
+        parts: list[ast.Call] = []
+        # Create `(a<b), (b<c), (c<d), ...` etc. in `parts`
+        for op, (idx, right) in zip(node.ops, enumerate(node.comparators), strict=True):
+            if idx == 0:
+                left = node.left
+            else:
+                left = node.comparators[idx - 1]
+
+            op_type = type(op)
+            dunder_name = self.cmp_op_map[op_type]
+            if op_type in (ast.In, ast.NotIn):
+                # `in` and `not in` have reversed semantics
+                comparison = self.call_method(right, dunder_name, args=[left])
+            else:
+                comparison = self.call_method(left, dunder_name, args=[right])
+
+            parts.append(comparison)
+
+        # Return `(a<b) and (b<c) and (c<d) and ...`
+        return ast.BoolOp(ast.And(), parts)
 
 
-def _build_number_under_8(number: int) -> str:
-    eight = "__name__.__len__()"
+def make_binop(op: ast.operator, exprs: Sequence[ast.expr]) -> ast.expr:
+    """
+    Builds a BinOp tree joining the `exprs` with the given `op`.
+    For eg. if `op` is `ast.Add()`, returns AST node for `expr1 + expr2 + ...`.
+    """
+    expr_tree, *exprs = exprs
+    for expr in exprs:
+        expr_tree = ast.BinOp(expr_tree, op, expr)
 
-    if number == 0:
-        return f"({eight}).__sub__({eight})"
-
-    one = f"({eight}.__floordiv__({eight}))"
-    return ".__add__".join([one] * number)
-
-
-def _build_number(number: int) -> str:
-    if number < 8:
-        return _build_number_under_8(number)
-
-    eight = "(__name__.__len__())"  # note that it is bracketed now
-    number_parts = []
-    remainder = number
-    while remainder >= 8:
-        log = int(math.log(remainder, 8))
-        # wrap this in brackets to ensure __mul__ happens before __add__
-        power_of_8 = "(" + ".__mul__".join([eight] * log) + ")"
-        number_parts.append(power_of_8)
-        # we just created this power of 8, subtract to get remainder
-        remainder -= 8**log
-
-    # now remainder is under 8.
-    if remainder > 0:
-        number_parts.append(_build_number_under_8(remainder))
-
-    return ".__add__".join(number_parts)
+    return expr_tree
