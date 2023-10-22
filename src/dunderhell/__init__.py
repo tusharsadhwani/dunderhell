@@ -189,9 +189,9 @@ class OpVisitor(ast.NodeTransformer):
         ast.Sub: "__sub__",
     }
 
+    # TODO: `not` has to be special cased. Put that in `BoolVisitor`.
     unary_op_map: dict[Type[ast.unaryop], str] = {
         ast.Invert: "__invert__",
-        ast.Not: "__bool__",
         ast.UAdd: "__pos__",
         ast.USub: "__neg__",
     }
@@ -226,6 +226,9 @@ class OpVisitor(ast.NodeTransformer):
 
     def visit_UnaryOp(self, node: ast.UnaryOp) -> ast.expr:
         super().generic_visit(node)
+        if isinstance(node.op, ast.Not):
+            # These can't be turned into a dunder directly.
+            return node
 
         dunder_name = self.unary_op_map[type(node.op)]
         return self.call_method(node.operand, dunder_name, args=[])
@@ -239,12 +242,12 @@ class OpVisitor(ast.NodeTransformer):
     def visit_Compare(self, node: ast.Compare) -> ast.expr:
         super().generic_visit(node)
 
-        if any(type(op) in (ast.Is, ast.IsNot) for op in node.ops):
+        if any(isinstance(op, (ast.Is, ast.IsNot)) for op in node.ops):
             # These can't be turned into a dunder directly.
             # If you're using `IsVisitor` before `OpVisitor`, this should never be hit.
             return node
 
-        parts: list[ast.Call] = []
+        parts: list[ast.expr] = []
         # Create `(a<b), (b<c), (c<d), ...` etc. in `parts`
         for op, (idx, right) in zip(node.ops, enumerate(node.comparators), strict=True):
             if idx == 0:
@@ -256,7 +259,10 @@ class OpVisitor(ast.NodeTransformer):
             dunder_name = self.cmp_op_map[op_type]
             if op_type in (ast.In, ast.NotIn):
                 # `in` and `not in` have reversed semantics
-                comparison = self.call_method(right, dunder_name, args=[left])
+                comparison: ast.expr = self.call_method(right, dunder_name, args=[left])
+                # `not in` must be wrapped in `not`.
+                if op_type == ast.NotIn:
+                    comparison = ast.UnaryOp(ast.Not(), comparison)
             else:
                 comparison = self.call_method(left, dunder_name, args=[right])
 
