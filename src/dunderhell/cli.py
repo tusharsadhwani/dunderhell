@@ -33,3 +33,7 @@ def cli() -> int:
     # TODO: add --in-place flag to write to file
     print(ast.unparse(tree))
     return 0
+
+
+if __name__ == "__main__":
+    cli()

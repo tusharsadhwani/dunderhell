@@ -1,7 +1,7 @@
 import ast
 import math
 from textwrap import dedent
-from typing import Sequence, Type
+from typing import Sequence, Type, TypeVar
 
 
 def dunderify(tree: ast.AST) -> None:
@@ -10,6 +10,7 @@ def dunderify(tree: ast.AST) -> None:
         StringVisitor(),
         NumberVisitor(),
         OpVisitor(),
+        LocalVariableRenamer(),
     ]
 
     for visitor in visitors:
@@ -69,7 +70,7 @@ class StringVisitor(ast.NodeTransformer):
         """Creates a `__chr__()` call from a character eg. 'a' -> __chr__(97)."""
         char_number = ord(character)
         return ast.Call(
-            func=ast.Name("__chr__"),
+            func=ast.Name("__chr__", ctx=ast.Load()),
             args=[ast.Constant(char_number)],
             keywords=[],
         )
@@ -86,7 +87,11 @@ class StringVisitor(ast.NodeTransformer):
         if len(string) == 0:
             # Create empty string by doing `__name__.__class__()`
             return ast.Call(
-                func=ast.Attribute(ast.Name(id="__name__"), attr="__class__"),
+                func=ast.Attribute(
+                    ast.Name(id="__name__", ctx=ast.Load()),
+                    attr="__class__",
+                    ctx=ast.Load(),
+                ),
                 args=[],
                 keywords=[],
             )
@@ -128,7 +133,11 @@ class NumberVisitor(ast.NodeTransformer):
 
     # __name__.__len__() == 8
     eight = ast.Call(
-        func=ast.Attribute(ast.Name(id="__name__"), attr="__len__"),
+        func=ast.Attribute(
+            ast.Name(id="__name__", ctx=ast.Load()),
+            attr="__len__",
+            ctx=ast.Load(),
+        ),
         args=[],
         keywords=[],
     )
@@ -290,3 +299,94 @@ class OpVisitor(ast.NodeTransformer):
 
         # Return `(a<b) and (b<c) and (c<d) and ...`
         return ast.BoolOp(ast.And(), parts)
+
+
+class VariableRenamer(ast.NodeTransformer):
+    """Renames all `Name` nodes with given names, to dunders."""
+
+    def __init__(self, names: Sequence[str]) -> None:
+        self.names = set(names)
+
+    def visit_Name(self, node: ast.Name) -> ast.Name:
+        if node.id in self.names:
+            # Replace name with dundered name
+            node.id = f"__{node.id}__"
+
+        return node
+
+
+class ScopeVariableGatherer(ast.NodeVisitor):
+    """
+    Gather all variables defined in this scope.
+
+    Essentially, get the ones that are stored before loading. Avoid ones mentioned in
+    `global` or `nonlocal` statements.
+    """
+
+    def __init__(self) -> None:
+        self.visited_original_scope = False
+
+        self.local_names = set()
+        self.names_loaded_or_deleted = set()
+        self.global_or_nonlocal_names = set()
+
+    def generic_visit(self, node: ast.AST) -> None:
+        """Don't visit nodes inside other scopes. Just the current one."""
+        if not self.visited_original_scope:
+            self.visited_original_scope = True
+            # Only visit the body of the original function.
+            return super().generic_visit(node)
+
+        # Still visit every child that doesn't have a scope
+        if not isinstance(
+            node,  # TODO: what about listcomps and genexps? they have scopes
+            (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
+        ):
+            return super().generic_visit(node)
+
+    def visit_Global(self, node: ast.Global) -> None:
+        self.global_or_nonlocal_names.update(node.names)
+
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        self.global_or_nonlocal_names.update(node.names)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        name = node.id
+        if name in self.names_loaded_or_deleted:
+            # The name was loaded or deleted before being stored, so it's not local
+            return
+
+        if isinstance(node.ctx, ast.Store):
+            # Variable was stored first. It is a local variable.
+            self.local_names.add(node.id)
+
+
+ScopedNode = TypeVar(
+    "ScopedNode", ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef
+)
+
+
+class LocalVariableRenamer(ast.NodeTransformer):
+    """Rename all variables defined in the current scope."""
+
+    @staticmethod
+    def dunderify_class_or_function(node: ScopedNode) -> ScopedNode:
+        gatherer = ScopeVariableGatherer()
+        gatherer.visit(node)
+        return VariableRenamer(names=gatherer.local_names).visit(node)
+
+    def visit_Module(self, node: ast.Module) -> ast.Module:
+        node = self.generic_visit(node)
+        return self.dunderify_class_or_function(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.ClassDef:
+        node = self.generic_visit(node)
+        return self.dunderify_class_or_function(node)
+
+    def visit_FunctionDef(self, fn: ast.FunctionDef) -> ast.FunctionDef:
+        fn = self.generic_visit(fn)
+        return self.dunderify_class_or_function(fn)
+
+    def visit_AsyncFunctionDef(self, fn: ast.AsyncFunctionDef) -> ast.AsyncFunctionDef:
+        fn = self.generic_visit(fn)
+        return self.dunderify_class_or_function(fn)
