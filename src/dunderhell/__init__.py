@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import ast
 import math
 from textwrap import dedent
