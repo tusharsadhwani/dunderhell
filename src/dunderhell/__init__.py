@@ -326,23 +326,23 @@ class ScopeVariableGatherer(ast.NodeVisitor):
     def __init__(self) -> None:
         self.visited_original_scope = False
 
-        self.local_names = set()
-        self.names_loaded_or_deleted = set()
-        self.global_or_nonlocal_names = set()
+        self.local_names: set[str] = set()
+        self.names_loaded_or_deleted: set[str] = set()
+        self.global_or_nonlocal_names: set[str] = set()
 
     def generic_visit(self, node: ast.AST) -> None:
         """Don't visit nodes inside other scopes. Just the current one."""
         if not self.visited_original_scope:
             self.visited_original_scope = True
             # Only visit the body of the original function.
-            return super().generic_visit(node)
+            super().generic_visit(node)
 
         # Still visit every child that doesn't have a scope
         if not isinstance(
             node,  # TODO: what about listcomps and genexps? they have scopes
             (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
         ):
-            return super().generic_visit(node)
+            super().generic_visit(node)
 
     def visit_Global(self, node: ast.Global) -> None:
         self.global_or_nonlocal_names.update(node.names)
@@ -373,20 +373,27 @@ class LocalVariableRenamer(ast.NodeTransformer):
     def dunderify_class_or_function(node: ScopedNode) -> ScopedNode:
         gatherer = ScopeVariableGatherer()
         gatherer.visit(node)
-        return VariableRenamer(names=gatherer.local_names).visit(node)
+        local_names = [
+            name
+            for name in gatherer.local_names
+            # If it's already a dunder don't dunderify it
+            if not name.startswith("__") and not name.endswith("__")
+        ]
+        node = VariableRenamer(names=local_names).visit(node)
+        return node
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
-        node = self.generic_visit(node)
+        self.generic_visit(node)
         return self.dunderify_class_or_function(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> ast.ClassDef:
-        node = self.generic_visit(node)
+        self.generic_visit(node)
         return self.dunderify_class_or_function(node)
 
     def visit_FunctionDef(self, fn: ast.FunctionDef) -> ast.FunctionDef:
-        fn = self.generic_visit(fn)
+        self.generic_visit(fn)
         return self.dunderify_class_or_function(fn)
 
     def visit_AsyncFunctionDef(self, fn: ast.AsyncFunctionDef) -> ast.AsyncFunctionDef:
-        fn = self.generic_visit(fn)
+        self.generic_visit(fn)
         return self.dunderify_class_or_function(fn)
