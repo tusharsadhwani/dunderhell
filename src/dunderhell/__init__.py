@@ -314,6 +314,13 @@ class VariableRenamer(ast.NodeTransformer):
 
         return node
 
+    def visit_arg(self, node: ast.arg) -> ast.arg:
+        if node.arg in self.names:
+            # Replace name with dundered name
+            node.arg = f"__{node.arg}__"
+
+        return node
+
 
 class ScopeVariableGatherer(ast.NodeVisitor):
     """
@@ -333,6 +340,18 @@ class ScopeVariableGatherer(ast.NodeVisitor):
     def generic_visit(self, node: ast.AST) -> None:
         """Don't visit nodes inside other scopes. Just the current one."""
         if not self.visited_original_scope:
+            # Store the args of the given function as local names
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for arg in (
+                    *node.args.posonlyargs,
+                    *node.args.args,
+                    node.args.vararg,
+                    *node.args.kwonlyargs,
+                    node.args.kwarg,
+                ):
+                    if arg is not None:
+                        self.local_names.add(arg.arg)
+
             self.visited_original_scope = True
             # Only visit the body of the original function.
             super().generic_visit(node)
