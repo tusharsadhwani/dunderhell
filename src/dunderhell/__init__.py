@@ -18,6 +18,18 @@ def dunderify(tree: ast.AST) -> None:
     ast.fix_missing_locations(tree)
 
 
+def make_binop(op: ast.operator, exprs: Sequence[ast.expr]) -> ast.expr:
+    """
+    Builds a BinOp tree joining the `exprs` with the given `op`.
+    For eg. if `op` is `ast.Add()`, returns AST node for `expr1 + expr2 + ...`.
+    """
+    expr_tree, *exprs = exprs
+    for expr in exprs:
+        expr_tree = ast.BinOp(expr_tree, op, expr)
+
+    return expr_tree
+
+
 class StringVisitor(ast.NodeTransformer):
     """
     Converts strings into bunch of `__chr__()` calls.
@@ -65,11 +77,19 @@ class StringVisitor(ast.NodeTransformer):
     def visit_Constant(self, node: ast.Constant) -> ast.expr:
         super().generic_visit(node)
 
-        if not isinstance(node.value, str):
+        if type(node.value) is not str:
             return node
 
         string = node.value
         self.string_found = True
+
+        if len(string) == 0:
+            # Create empty string by doing `__name__.__class__()`
+            return ast.Call(
+                func=ast.Attribute(ast.Name(id="__name__"), attr="__class__"),
+                args=[],
+                keywords=[],
+            )
 
         # If single character, can return just the one __chr__(N) call
         if len(string) == 1:
@@ -149,7 +169,7 @@ class NumberVisitor(ast.NodeTransformer):
     def visit_Constant(self, node: ast.Constant) -> ast.expr:
         super().generic_visit(node)
 
-        if not isinstance(node.value, int):
+        if type(node.value) is not int:
             return node
 
         number = node.value
@@ -270,15 +290,3 @@ class OpVisitor(ast.NodeTransformer):
 
         # Return `(a<b) and (b<c) and (c<d) and ...`
         return ast.BoolOp(ast.And(), parts)
-
-
-def make_binop(op: ast.operator, exprs: Sequence[ast.expr]) -> ast.expr:
-    """
-    Builds a BinOp tree joining the `exprs` with the given `op`.
-    For eg. if `op` is `ast.Add()`, returns AST node for `expr1 + expr2 + ...`.
-    """
-    expr_tree, *exprs = exprs
-    for expr in exprs:
-        expr_tree = ast.BinOp(expr_tree, op, expr)
-
-    return expr_tree
