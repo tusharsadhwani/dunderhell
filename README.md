@@ -14,6 +14,9 @@ pip install dunderhell
 $ cat foo.py
 print(1)
 
+$ cat foo.py | python3
+1
+
 $ dunderhell foo.py
 __chr__ = __builtins__.__getattribute__(__name__.__reduce__.__name__[
 __name__.__len__().__floordiv__(__name__.__len__()).__add__(__name__.__len__()
@@ -55,6 +58,9 @@ __name__.__len__()).__add__(__name__.__len__()).__add__(__name__.__len__()
 __name__.__len__())).__add__(__name__.__len__().__floordiv__(__name__.__len__()
 )).__add__(__name__.__len__().__floordiv__(__name__.__len__()))))))(
 __name__.__len__().__floordiv__(__name__.__len__()))
+
+$ dunderhell foo.py | python3
+1
 ```
 
 ## Local Development / Testing
