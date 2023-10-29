@@ -1,6 +1,6 @@
 # dunderhell
 
-Turn all your Python code into dunders.
+Turn your Python code entirely into dunders.
 
 ## Installation
 
@@ -10,11 +10,51 @@ pip install dunderhell
 
 ## Usage
 
-```console
+```python
 $ cat foo.py
 print(1)
+
 $ dunderhell foo.py
-print(__name__.__len__().__floordiv__(__name__.__len__()))
+__chr__ = __builtins__.__getattribute__(__name__.__reduce__.__name__[
+__name__.__len__().__floordiv__(__name__.__len__()).__add__(__name__.__len__()
+.__floordiv__(__name__.__len__())).__add__(__name__.__len__().__floordiv__(
+__name__.__len__())).__add__(__name__.__len__().__floordiv__(__name__.__len__()
+)).__add__(__name__.__len__().__floordiv__(__name__.__len__())).__add__(
+__name__.__len__().__floordiv__(__name__.__len__()))].__add__(
+__name__.__add__.__class__.__name__[__name__.__len__().__floordiv__(
+__name__.__len__()).__add__(__name__.__len__().__floordiv__(__name__.__len__())
+).__add__(__name__.__len__().__floordiv__(__name__.__len__()))]).__add__(
+__name__.__class__.__name__[__name__.__len__().__floordiv__(__name__.__len__())
+.__neg__()]))
+
+__builtins__.__getattribute__(__chr__(__name__.__len__().__mul__(
+__name__.__len__()).__add__(__name__.__len__()).__add__(__name__.__len__())
+.__add__(__name__.__len__()).__add__(__name__.__len__()).__add__(
+__name__.__len__()).__add__(__name__.__len__())).__add__(__chr__(
+__name__.__len__().__mul__(__name__.__len__()).__add__(__name__.__len__())
+.__add__(__name__.__len__()).__add__(__name__.__len__()).__add__(
+__name__.__len__()).__add__(__name__.__len__()).__add__(__name__.__len__())
+.__add__(__name__.__len__().__floordiv__(__name__.__len__()).__add__(
+__name__.__len__().__floordiv__(__name__.__len__()))))).__add__(__chr__(
+__name__.__len__().__mul__(__name__.__len__()).__add__(__name__.__len__())
+.__add__(__name__.__len__()).__add__(__name__.__len__()).__add__(
+__name__.__len__()).__add__(__name__.__len__()).__add__(__name__.__len__()
+.__floordiv__(__name__.__len__())))).__add__(__chr__(__name__.__len__()
+.__mul__(__name__.__len__()).__add__(__name__.__len__()).__add__(
+__name__.__len__()).__add__(__name__.__len__()).__add__(__name__.__len__())
+.__add__(__name__.__len__()).__add__(__name__.__len__().__floordiv__(
+__name__.__len__()).__add__(__name__.__len__().__floordiv__(__name__.__len__()
+)).__add__(__name__.__len__().__floordiv__(__name__.__len__())).__add__(
+__name__.__len__().__floordiv__(__name__.__len__())).__add__(__name__.__len__()
+.__floordiv__(__name__.__len__())).__add__(__name__.__len__().__floordiv__(
+__name__.__len__()))))).__add__(__chr__(__name__.__len__().__mul__(
+__name__.__len__()).__add__(__name__.__len__()).__add__(__name__.__len__())
+.__add__(__name__.__len__()).__add__(__name__.__len__()).__add__(
+__name__.__len__()).__add__(__name__.__len__()).__add__(__name__.__len__()
+.__floordiv__(__name__.__len__()).__add__(__name__.__len__().__floordiv__(
+__name__.__len__())).__add__(__name__.__len__().__floordiv__(__name__.__len__()
+)).__add__(__name__.__len__().__floordiv__(__name__.__len__()))))))(
+__name__.__len__().__floordiv__(__name__.__len__()))
 ```
 
 ## Local Development / Testing
