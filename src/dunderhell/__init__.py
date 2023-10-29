@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import math
 from textwrap import dedent
-from typing import Sequence, Type, TypeVar
+from typing import Callable, Sequence, Type, TypeVar
 
 
 def dunderify(tree: ast.AST) -> None:
     """Turn Python code into dunders."""
     visitors = [
+        BuiltinsRenamer(),
         StringVisitor(),
         NumberVisitor(),
         OpVisitor(),
@@ -306,13 +308,18 @@ class OpVisitor(ast.NodeTransformer):
 class VariableRenamer(ast.NodeTransformer):
     """Renames all `Name` nodes with given names, to dunders."""
 
-    def __init__(self, names: Sequence[str]) -> None:
+    def __init__(
+        self,
+        names: Sequence[str],
+        replacer_function: Callable[[str], str],
+    ) -> None:
         self.names = set(names)
+        self.replacer_function = replacer_function
 
     def visit_Name(self, node: ast.Name) -> ast.Name:
         if node.id in self.names:
-            # Replace name with dundered name
-            node.id = f"__{node.id}__"
+            # Replace node with replaced node
+            node = self.replacer_function(node)
 
         return node
 
@@ -336,11 +343,12 @@ class ScopeVariableGatherer(ast.NodeVisitor):
         self.visited_original_scope = False
 
         self.local_names: set[str] = set()
-        self.names_loaded_or_deleted: set[str] = set()
+        self.external_names: set[str] = set()
         self.global_or_nonlocal_names: set[str] = set()
 
     def generic_visit(self, node: ast.AST) -> None:
         """Don't visit nodes inside other scopes. Just the current one."""
+        # TODO: try overriding `visit` instead?
         if not self.visited_original_scope:
             # Store the args of the given function as local names
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -373,13 +381,20 @@ class ScopeVariableGatherer(ast.NodeVisitor):
 
     def visit_Name(self, node: ast.Name) -> None:
         name = node.id
-        if name in self.names_loaded_or_deleted:
+        if name in self.local_names:
+            # The name was already detected as a local name.
+            return
+
+        if name in self.external_names:
             # The name was loaded or deleted before being stored, so it's not local
             return
 
         if isinstance(node.ctx, ast.Store):
             # Variable was stored first. It is a local variable.
-            self.local_names.add(node.id)
+            self.local_names.add(name)
+        else:
+            # Variable was loaded or deleted first. `It is not a local variable.
+            self.external_names.add(name)
 
 
 ScopedNode = TypeVar(
@@ -391,7 +406,12 @@ class LocalVariableRenamer(ast.NodeTransformer):
     """Rename all variables defined in the current scope."""
 
     @staticmethod
-    def dunderify_class_or_function(node: ScopedNode) -> ScopedNode:
+    def dunderify_name_node(node: ast.AST) -> ast.Name:
+        assert isinstance(node, ast.Name)
+        node.id = f"__{node.id}__"
+        return node
+
+    def dunderify_class_or_function(self, node: ScopedNode) -> ScopedNode:
         gatherer = ScopeVariableGatherer()
         gatherer.visit(node)
         local_names = [
@@ -400,7 +420,9 @@ class LocalVariableRenamer(ast.NodeTransformer):
             # If it's already a dunder don't dunderify it
             if not name.startswith("__") and not name.endswith("__")
         ]
-        node = VariableRenamer(names=local_names).visit(node)
+        node = VariableRenamer(
+            names=local_names, replacer_function=self.dunderify_name_node
+        ).visit(node)
         return node
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
@@ -418,3 +440,58 @@ class LocalVariableRenamer(ast.NodeTransformer):
     def visit_AsyncFunctionDef(self, fn: ast.AsyncFunctionDef) -> ast.AsyncFunctionDef:
         self.generic_visit(fn)
         return self.dunderify_class_or_function(fn)
+
+
+class BuiltinsRenamer(ast.NodeTransformer):
+    """
+    Rename all builtins, that are not defined in any parent scope.
+
+    This should be used after `LocalVariableRenamer`, as it relies on the fact that all
+    locally defined variables have already been dunderified and no longer clash with
+    builtins.
+    """
+
+    @staticmethod
+    def replace_builtin_with_getattribute(node: ast.AST) -> ast.Call:
+        assert isinstance(node, ast.Name)
+
+        # Replace `print` with `__builtins__.__getattribute__('print')`
+        return ast.Call(
+            func=ast.Attribute(
+                ast.Name("__builtins__", ctx=ast.Load()),
+                attr="__getattribute__",
+                ctx=ast.Load(),
+            ),
+            args=[ast.Constant(node.id)],
+            keywords=[],
+        )
+
+    def dunderify_builtins(self, node: ScopedNode) -> ScopedNode:
+        builtin_names = {
+            builtin for builtin in dir(builtins) if not builtin.startswith("_")
+        }
+
+        # Any remaining builtin variables are assumed to be actual builtins.
+        # This is assumed because the previous visitors should have dunderified all
+        # user defined variables. So whatever is left is builtins.
+        node = VariableRenamer(
+            names=builtin_names,
+            replacer_function=self.replace_builtin_with_getattribute,
+        ).visit(node)
+        return node
+
+    def visit_Module(self, node: ast.Module) -> ast.Module:
+        self.generic_visit(node)
+        return self.dunderify_builtins(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.ClassDef:
+        self.generic_visit(node)
+        return self.dunderify_builtins(node)
+
+    def visit_FunctionDef(self, fn: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(fn)
+        return self.dunderify_builtins(fn)
+
+    def visit_AsyncFunctionDef(self, fn: ast.AsyncFunctionDef) -> ast.AsyncFunctionDef:
+        self.generic_visit(fn)
+        return self.dunderify_builtins(fn)
