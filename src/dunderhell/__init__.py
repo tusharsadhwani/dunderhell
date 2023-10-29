@@ -450,6 +450,9 @@ class BuiltinsRenamer(ast.NodeTransformer):
     locally defined variables have already been dunderified and no longer clash with
     builtins.
     """
+    builtin_names = {
+        builtin for builtin in dir(builtins) if not builtin.startswith("_")
+    }
 
     @staticmethod
     def replace_builtin_with_getattribute(node: ast.AST) -> ast.Call:
@@ -467,15 +470,13 @@ class BuiltinsRenamer(ast.NodeTransformer):
         )
 
     def dunderify_builtins(self, node: ScopedNode) -> ScopedNode:
-        builtin_names = {
-            builtin for builtin in dir(builtins) if not builtin.startswith("_")
-        }
+        
 
         # Any remaining builtin variables are assumed to be actual builtins.
         # This is assumed because the previous visitors should have dunderified all
         # user defined variables. So whatever is left is builtins.
         node = VariableRenamer(
-            names=builtin_names,
+            names=self.builtin_names,
             replacer_function=self.replace_builtin_with_getattribute,
         ).visit(node)
         return node
